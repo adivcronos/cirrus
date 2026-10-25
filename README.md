@@ -13,7 +13,10 @@ Cirrus never signs you in itself. It hands one of these to the CLI:
 
 ## Remote Control
 
-Turn it on from the sidebar to reach this computer's Claude Code from claude.ai or the Claude mobile app. It runs `claude remote-control`, which only works with a **full login**. Long-lived tokens are limited to chatting.
+Two ways to reach this computer's Claude Code from your phone:
+
+- **Cirrus Remote** (runs on your token): turn it on in the Remote Control panel and scan the QR code. Cirrus serves the same chat to your phone's browser, live-synced with the desktop window (messages, Allow / Deny, Stop). It works on the same Wi-Fi, or from anywhere through [Tailscale](https://tailscale.com). The link has a secret key in it; "New link" cancels old ones.
+- **Claude's official Remote Control**: runs `claude remote-control` for claude.ai and the Claude app. It needs a full login, because long-lived tokens are inference-only.
 
 ## Requirements
 

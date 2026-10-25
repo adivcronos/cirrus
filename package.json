@@ -1,7 +1,7 @@
 {
   "name": "cirrus",
   "productName": "Cirrus",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Desktop UI for the Claude Code CLI",
   "main": "src/main.js",
   "author": "adivcronos",
@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "dompurify": "3.2.3",
-    "marked": "14.1.4"
+    "marked": "14.1.4",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
     "electron": "33.2.1",
@@ -22,11 +23,47 @@
   "build": {
     "appId": "dev.cronoso5.cirrus",
     "productName": "Cirrus",
-    "files": ["src/**", "node_modules/marked/lib/**", "node_modules/dompurify/dist/**", "package.json"],
-    "directories": { "output": "dist", "buildResources": "build" },
-    "linux": { "target": ["AppImage", "deb"], "maintainer": "Cirrus <cirrus@users.noreply.github.com>", "category": "Development", "icon": "build/icon.png" },
-    "win": { "target": ["nsis"], "icon": "build/icon.png" },
-    "mac": { "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }], "category": "public.app-category.developer-tools", "icon": "build/icon.png" },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "files": [
+      "src/**",
+      "node_modules/marked/lib/**",
+      "node_modules/dompurify/dist/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "maintainer": "Cirrus <cirrus@users.noreply.github.com>",
+      "category": "Development",
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('cirrus', {
   setMode: (sid, mode) => ipcRenderer.invoke('cc:setMode', sid, mode),
   setModel: (sid, model) => ipcRenderer.invoke('cc:setModel', sid, model),
   stop: (sid) => ipcRenderer.invoke('cc:stop', sid),
+  sessionState: (sid) => ipcRenderer.invoke('cc:state', sid),
+  announce: (sid, info) => ipcRenderer.invoke('cc:announce', sid, info),
   onEvent: on('cc:event'),
 
   rcStart: () => ipcRenderer.invoke('rc:start'),
@@ -28,6 +30,13 @@ contextBridge.exposeInMainWorld('cirrus', {
   rcRunning: () => ipcRenderer.invoke('rc:running'),
   onRcOutput: on('rc:output'),
   onRcStatus: on('rc:status'),
+
+  remoteStart: () => ipcRenderer.invoke('remote:start'),
+  remoteStop: () => ipcRenderer.invoke('remote:stop'),
+  remoteInfo: () => ipcRenderer.invoke('remote:info'),
+  remoteNewKey: () => ipcRenderer.invoke('remote:newKey'),
+  onRemoteClients: on('remote:clients'),
+  onRemoteLink: () => () => {},
 
   authStatus: () => ipcRenderer.invoke('auth:status'),
   login: () => ipcRenderer.invoke('auth:login'),

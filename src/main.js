@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const readline = require('readline');
+const http = require('http');
+const crypto = require('crypto');
 
 const IS_WIN = process.platform === 'win32';
 let win = null;
@@ -20,6 +22,8 @@ const DEFAULTS = {
   authMode: 'token', // 'token' = long-lived OAuth token, 'login' = full `claude auth login`
   tokenEnc: '',
   rcName: '',
+  rcKey: '',
+  remoteOn: false,
 };
 let settings = { ...DEFAULTS };
 
@@ -106,7 +110,14 @@ function spawnClaude(args, opts) {
   return spawn(useShell ? `"${bin}"` : bin, args, { ...opts, shell: useShell, windowsHide: true });
 }
 
-const send = (channel, payload) => { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); };
+// Deliver an event to the desktop window and to every connected phone.
+const send = (channel, payload) => {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  if (sseClients.size) {
+    const line = `data: ${JSON.stringify({ channel, payload })}\n\n`;
+    for (const c of sseClients) c.write(line);
+  }
+};
 const stripAnsi = (s) => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g, '');
 
 // ---------- chat sessions ----------
@@ -115,6 +126,7 @@ class Session {
   constructor(sid, { resume, cwd, model, permissionMode }) {
     this.sid = sid;
     this.reqN = 0;
+    this.claudeId = resume || null;
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--include-partial-messages', '--permission-prompt-tool', 'stdio', '--permission-mode', permissionMode || 'manual'];
     if (model) args.push('--model', model);
@@ -128,6 +140,7 @@ class Session {
         this.write({ type: 'control_response', response: { subtype: 'error', request_id: msg.request_id, error: `Unsupported by Cirrus: ${msg.request?.subtype}` } });
         return;
       }
+      if (msg.type === 'system' && msg.subtype === 'init') this.claudeId = msg.session_id;
       send('cc:event', { sid, msg });
     });
     this.proc.stderr.on('data', (d) => send('cc:event', { sid, msg: { type: 'stderr', text: stripAnsi(d.toString()) } }));
@@ -239,55 +252,222 @@ function authStatus() {
   });
 }
 
-// ---------- IPC ----------
+// ---------- actions (shared by the desktop window and phone clients) ----------
 
-ipcMain.handle('settings:get', async () => {
+const actions = {};
+const remoteOk = new Set();
+function expose(name, fn, { remote = false } = {}) {
+  actions[name] = fn;
+  if (remote) remoteOk.add(name);
+  ipcMain.handle(name, (_e, ...args) => fn(...args));
+}
+
+async function publicSettings() {
   await loadShellEnv();
-  const { tokenEnc, ...rest } = settings;
+  const { tokenEnc, rcKey, ...rest } = settings;
   const tok = currentToken();
   return { ...rest, hasToken: !!tok, tokenSource: storedToken() ? 'saved' : tok ? 'environment' : 'none', claudeFound: findClaude(), platform: process.platform };
-});
-ipcMain.handle('settings:set', (_e, patch) => {
+}
+
+expose('settings:get', publicSettings, { remote: true });
+expose('settings:set', (patch) => {
   if ('token' in patch) { setStoredToken(String(patch.token || '').trim()); delete patch.token; }
+  delete patch.rcKey;
   Object.assign(settings, patch);
   saveSettings();
   return true;
 });
-ipcMain.handle('dialog:folder', async () => {
+// Phones may only change the model and permission mode.
+expose('settings:setChat', (patch) => {
+  for (const k of ['model', 'permissionMode']) if (k in patch) settings[k] = String(patch[k] || '');
+  saveSettings();
+  return true;
+}, { remote: true });
+expose('dialog:folder', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'], defaultPath: settings.cwd });
   return r.canceled ? null : r.filePaths[0];
 });
-ipcMain.handle('conv:list', (_e, cwd) => listConversations(cwd || settings.cwd));
-ipcMain.handle('conv:load', (_e, cwd, id) => loadConversation(cwd || settings.cwd, id));
+expose('conv:list', () => listConversations(settings.cwd), { remote: true });
+expose('conv:load', (_cwd, id) => loadConversation(settings.cwd, String(id)), { remote: true });
 
-ipcMain.handle('cc:start', async (_e, sid, opts) => {
+expose('cc:start', async (sid, opts = {}) => {
   await loadShellEnv();
   sessions.get(sid)?.kill();
   try {
-    sessions.set(sid, new Session(sid, { cwd: settings.cwd, model: settings.model, permissionMode: settings.permissionMode, ...opts }));
+    const { resume, model, permissionMode } = opts;
+    sessions.set(sid, new Session(sid, {
+      cwd: settings.cwd,
+      resume: resume || undefined,
+      model: model ?? settings.model,
+      permissionMode: permissionMode || settings.permissionMode,
+    }));
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
-});
-ipcMain.handle('cc:send', (_e, sid, content) => { sessions.get(sid)?.user(content); return !!sessions.get(sid); });
-ipcMain.handle('cc:interrupt', (_e, sid) => { sessions.get(sid)?.control({ subtype: 'interrupt' }); });
-ipcMain.handle('cc:permission', (_e, sid, requestId, response) => { sessions.get(sid)?.answer(requestId, response); });
-ipcMain.handle('cc:setMode', (_e, sid, mode) => { sessions.get(sid)?.control({ subtype: 'set_permission_mode', mode }); });
-ipcMain.handle('cc:setModel', (_e, sid, model) => { sessions.get(sid)?.control({ subtype: 'set_model', model: model || undefined }); });
-ipcMain.handle('cc:stop', (_e, sid) => { sessions.get(sid)?.kill(); });
+}, { remote: true });
+expose('cc:send', (sid, content) => {
+  const s = sessions.get(sid);
+  if (!s) return false;
+  s.user(content);
+  // Every window and phone shows the message, not just the one that sent it.
+  send('cc:event', { sid, msg: { type: 'cirrus_user', message: { role: 'user', content } } });
+  return true;
+}, { remote: true });
+expose('cc:interrupt', (sid) => { sessions.get(sid)?.control({ subtype: 'interrupt' }); }, { remote: true });
+expose('cc:permission', (sid, requestId, response) => {
+  sessions.get(sid)?.answer(requestId, response);
+  send('cc:event', { sid, msg: { type: 'cirrus_perm_answered', request_id: requestId, behavior: response?.behavior } });
+}, { remote: true });
+expose('cc:setMode', (sid, mode) => { sessions.get(sid)?.control({ subtype: 'set_permission_mode', mode }); }, { remote: true });
+expose('cc:setModel', (sid, model) => { sessions.get(sid)?.control({ subtype: 'set_model', model: model || undefined }); }, { remote: true });
+expose('cc:stop', (sid) => { sessions.get(sid)?.kill(); }, { remote: true });
+expose('cc:state', (sid) => {
+  const s = sessions.get(sid);
+  return { running: !!s, sessionId: s?.claudeId || null, active: activeChat.get(sid) ?? null };
+}, { remote: true });
+// A client switched chats: tell the others so they follow.
+const activeChat = new Map();
+expose('cc:announce', (sid, info) => {
+  activeChat.set(sid, info?.sessionId ?? null);
+  send('cc:event', { sid, msg: { type: 'cirrus_active', sessionId: info?.sessionId ?? null, origin: info?.origin } });
+}, { remote: true });
 
-ipcMain.handle('rc:start', async () => { await loadShellEnv(); try { startRemoteControl(); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
-ipcMain.handle('rc:stop', () => stopRemoteControl());
-ipcMain.handle('rc:running', () => !!rcProc);
-ipcMain.handle('auth:status', async () => { await loadShellEnv(); return authStatus(); });
-ipcMain.handle('auth:login', async () => { await loadShellEnv(); try { startLogin(); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
-ipcMain.handle('auth:loginInput', (_e, text) => { loginProc?.stdin.write(text + '\n'); });
-ipcMain.handle('auth:logout', async () => {
+expose('rc:start', async () => { await loadShellEnv(); try { startRemoteControl(); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
+expose('rc:stop', () => stopRemoteControl());
+expose('rc:running', () => !!rcProc);
+expose('auth:status', async () => { await loadShellEnv(); return authStatus(); }, { remote: true });
+expose('auth:login', async () => { await loadShellEnv(); try { startLogin(); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
+expose('auth:loginInput', (text) => { loginProc?.stdin.write(text + '\n'); });
+expose('auth:logout', async () => {
   await loadShellEnv();
   return new Promise((resolve) => {
     try { spawnClaude(['auth', 'logout'], { env: childEnv({ withToken: false }) }).on('exit', () => resolve(true)); } catch { resolve(false); }
   });
 });
-ipcMain.handle('open:external', (_e, url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
+expose('open:external', (url) => { if (/^https?:\/\//.test(url)) shell.openExternal(url); });
+
+// ---------- Cirrus Remote: serve the chat to phones ----------
+
+const ROOT = path.join(__dirname, '..');
+const STATIC = {
+  '/src/renderer/index.html': 'text/html; charset=utf-8',
+  '/src/renderer/style.css': 'text/css; charset=utf-8',
+  '/src/renderer/app.js': 'text/javascript; charset=utf-8',
+  '/src/renderer/remote-shim.js': 'text/javascript; charset=utf-8',
+  '/build/icon.png': 'image/png',
+  '/node_modules/marked/lib/marked.umd.js': 'text/javascript; charset=utf-8',
+  '/node_modules/dompurify/dist/purify.min.js': 'text/javascript; charset=utf-8',
+};
+const REMOTE_PORT = 8787;
+let remoteServer = null;
+let remotePort = 0;
+const sseClients = new Set();
+
+function remoteKey() {
+  if (!settings.rcKey) { settings.rcKey = crypto.randomBytes(24).toString('base64url'); saveSettings(); }
+  return settings.rcKey;
+}
+function keyOk(k) {
+  const a = Buffer.from(String(k || '')), b = Buffer.from(remoteKey());
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function remoteAddresses() {
+  const out = [];
+  for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if (a.family !== 'IPv4' || a.internal) continue;
+      const tailscale = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(a.address) || /tailscale/i.test(name);
+      out.push({ ip: a.address, kind: tailscale ? 'Tailscale (works anywhere)' : 'Same Wi-Fi' });
+    }
+  }
+  return out.sort((x, y) => (x.kind < y.kind ? 1 : -1));
+}
+
+async function remoteInfo() {
+  if (!remoteServer) return { running: false };
+  const QR = require('qrcode');
+  const links = await Promise.all(remoteAddresses().map(async (a) => {
+    const url = `http://${a.ip}:${remotePort}/?k=${remoteKey()}`;
+    return { ...a, url, qr: await QR.toDataURL(url, { margin: 1, width: 220 }) };
+  }));
+  return { running: true, port: remotePort, links, clients: sseClients.size };
+}
+
+function handleRemote(req, res) {
+  const u = new URL(req.url, 'http://x');
+  const deny = (code, msg) => { res.writeHead(code, { 'Content-Type': 'text/plain' }); res.end(msg); };
+  if (req.method === 'GET' && u.pathname === '/') {
+    res.writeHead(302, { Location: `/src/renderer/index.html${u.search}` });
+    return res.end();
+  }
+  if (req.method === 'GET' && STATIC[u.pathname]) {
+    return fs.readFile(path.join(ROOT, u.pathname), (err, data) => {
+      if (err) return deny(404, 'Not found');
+      res.writeHead(200, { 'Content-Type': STATIC[u.pathname], 'Cache-Control': 'no-store' });
+      res.end(data);
+    });
+  }
+  if (!u.pathname.startsWith('/api/')) return deny(404, 'Not found');
+  if (!keyOk(u.searchParams.get('k') || req.headers['x-cirrus-key'])) return deny(401, 'Bad or old link. Open the new one from Cirrus on your computer.');
+
+  if (req.method === 'GET' && u.pathname === '/api/events') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+    res.write(': hi\n\n');
+    sseClients.add(res);
+    send('remote:clients', sseClients.size);
+    const ping = setInterval(() => res.write(': ping\n\n'), 20000);
+    req.on('close', () => { clearInterval(ping); sseClients.delete(res); send('remote:clients', sseClients.size); });
+    return;
+  }
+  if (req.method === 'POST' && u.pathname === '/api/call') {
+    let body = '';
+    req.on('data', (d) => { body += d; if (body.length > 30e6) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        const { name, args = [] } = JSON.parse(body || '{}');
+        if (!remoteOk.has(name)) return deny(403, 'Not allowed from a phone');
+        const result = await actions[name](...args);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ result: result ?? null }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+  deny(404, 'Not found');
+}
+
+function startRemote() {
+  if (remoteServer) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const srv = http.createServer(handleRemote);
+    const listen = (port) => srv.listen(port, '0.0.0.0');
+    srv.on('error', (e) => { if (e.code === 'EADDRINUSE' && !srv._retried) { srv._retried = true; listen(0); } else reject(e); });
+    srv.on('listening', () => { remoteServer = srv; remotePort = srv.address().port; settings.remoteOn = true; saveSettings(); resolve(); });
+    listen(REMOTE_PORT);
+  });
+}
+function stopRemote() {
+  for (const c of sseClients) { try { c.end(); } catch {} }
+  sseClients.clear();
+  remoteServer?.close();
+  remoteServer = null;
+  settings.remoteOn = false;
+  saveSettings();
+}
+
+expose('remote:start', async () => { try { await startRemote(); return { ok: true, ...(await remoteInfo()) }; } catch (e) { return { ok: false, error: e.message }; } });
+expose('remote:stop', () => { stopRemote(); return { running: false }; });
+expose('remote:info', remoteInfo);
+expose('remote:newKey', async () => {
+  settings.rcKey = '';
+  remoteKey();
+  for (const c of sseClients) { try { c.end(); } catch {} }
+  sseClients.clear();
+  return remoteInfo();
+});
 
 // ---------- window ----------
 
@@ -303,9 +483,15 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 }
 
-app.whenReady().then(() => { loadSettings(); loadShellEnv(); createWindow(); });
+app.whenReady().then(() => {
+  loadSettings();
+  loadShellEnv();
+  createWindow();
+  if (settings.remoteOn) startRemote().catch(() => {});
+});
 app.on('window-all-closed', () => {
   for (const s of sessions.values()) s.kill();
   stopRemoteControl();
+  remoteServer?.close();
   app.quit();
 });

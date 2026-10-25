@@ -2,11 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <title>Cirrus</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="scrim"></div>
   <aside id="sidebar">
     <div class="side-top">
       <div class="brand"><span class="brand-dot"></span>Cirrus</div>
@@ -30,7 +32,7 @@
   </aside>
 
   <main id="main">
-    <header id="topbar"><div id="chatTitle">New chat</div><div id="statusPill" class="pill hidden"></div></header>
+    <header id="topbar"><button id="menuBtn" class="menu-btn" title="Chats"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div id="chatTitle">New chat</div><div id="statusPill" class="pill hidden"></div></header>
     <section id="scroller">
       <div id="messages">
         <div id="empty" class="empty">
@@ -117,19 +119,36 @@
   <div id="rcModal" class="modal hidden">
     <div class="sheet">
       <h2>Remote Control</h2>
-      <p class="hint">Lets you start and steer Claude Code sessions on this computer from claude.ai or the Claude phone app. It runs on your <b>full login</b>, since long-lived tokens aren't allowed to use it.</p>
-      <div class="row">
-        <span id="rcState" class="muted">Off</span>
+
+      <label class="field-label">Cirrus Remote <span class="muted">(runs on your token)</span></label>
+      <p class="hint">Open this chat on your phone or another computer. Everything stays in sync with this window: messages, Allow / Deny, Stop. Scan the code with your phone's camera.</p>
+      <div class="row" style="margin-top:10px">
+        <span id="remoteState" class="muted">Off</span>
         <div class="spacer"></div>
-        <button id="rcToggle" class="btn primary">Turn on</button>
+        <button id="remoteNewKey" class="btn ghost hidden" title="Old links and QR codes stop working">New link</button>
+        <button id="remoteToggle" class="btn primary">Turn on</button>
       </div>
-      <pre id="rcLog" class="log"></pre>
+      <div id="remoteLinks"></div>
+      <p class="hint" id="remoteFoot"></p>
+
+      <details class="adv">
+        <summary>Claude's official Remote Control (needs a full login)</summary>
+        <p class="hint">Uses Anthropic's own service so you can reach this computer from claude.ai or the Claude app. Long-lived tokens aren't allowed to use it, so sign in under Settings first.</p>
+        <div class="row" style="margin-top:10px">
+          <span id="rcState" class="muted">Off</span>
+          <div class="spacer"></div>
+          <button id="rcToggle" class="btn">Turn on</button>
+        </div>
+        <pre id="rcLog" class="log"></pre>
+      </details>
+
       <div class="row end"><button id="rcClose" class="btn ghost">Close</button></div>
     </div>
   </div>
 
   <script src="../../node_modules/marked/lib/marked.umd.js"></script>
   <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
+  <script src="remote-shim.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
