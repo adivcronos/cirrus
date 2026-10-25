@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Cirrus</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="side-top">
+      <div class="brand"><span class="brand-dot"></span>Cirrus</div>
+      <button id="newChat" class="btn-new" title="New chat (Ctrl+N)">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New chat
+      </button>
+      <button id="folderBtn" class="folder" title="Change working folder">
+        <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span id="folderName">~</span>
+      </button>
+    </div>
+    <div class="side-label">Recent</div>
+    <nav id="convList"></nav>
+    <div class="side-bottom">
+      <button id="rcBtn" class="side-item"><span id="rcDot" class="dot"></span>Remote Control</button>
+      <button id="settingsBtn" class="side-item">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        Settings
+      </button>
+    </div>
+  </aside>
+
+  <main id="main">
+    <header id="topbar"><div id="chatTitle">New chat</div><div id="statusPill" class="pill hidden"></div></header>
+    <section id="scroller">
+      <div id="messages">
+        <div id="empty" class="empty">
+          <div class="empty-mark"></div>
+          <h1>What are we building?</h1>
+          <p id="emptyHint">Claude Code runs underneath, in <code id="emptyFolder">~</code>.</p>
+        </div>
+      </div>
+    </section>
+    <footer id="composerWrap">
+      <div id="composer">
+        <div id="attachments"></div>
+        <textarea id="input" rows="1" placeholder="Ask Claude Code to do something…  (Enter to send, Shift+Enter for a new line)"></textarea>
+        <div class="composer-row">
+          <select id="modelSel" title="Model">
+            <option value="">Default model</option>
+            <option value="opus">Opus</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="haiku">Haiku</option>
+            <option value="fable">Fable</option>
+          </select>
+          <select id="modeSel" title="Permission mode">
+            <option value="manual">Ask before acting</option>
+            <option value="acceptEdits">Accept edits</option>
+            <option value="plan">Plan only</option>
+            <option value="auto">Auto</option>
+            <option value="bypassPermissions">Bypass permissions</option>
+          </select>
+          <div class="spacer"></div>
+          <button id="sendBtn" class="send" title="Send">
+            <svg class="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            <svg class="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+          </button>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Settings -->
+  <div id="settingsModal" class="modal hidden">
+    <div class="sheet">
+      <h2>Settings</h2>
+      <label class="field-label">Sign-in used for chats</label>
+      <div class="seg" id="authSeg">
+        <button data-v="token">OAuth token</button>
+        <button data-v="login">Full login</button>
+      </div>
+      <p class="hint" id="authHint"></p>
+
+      <div id="tokenBlock">
+        <label class="field-label" for="tokenInput">OAuth token</label>
+        <input id="tokenInput" type="password" placeholder="sk-ant-oat01-…  (leave empty to use CLAUDE_CODE_OAUTH_TOKEN)">
+        <p class="hint" id="tokenHint"></p>
+      </div>
+
+      <label class="field-label">Full login <span class="muted">(needed for Remote Control)</span></label>
+      <div class="row">
+        <span id="loginState" class="muted">Checking…</span>
+        <div class="spacer"></div>
+        <button id="loginBtn" class="btn">Sign in</button>
+        <button id="logoutBtn" class="btn ghost hidden">Sign out</button>
+      </div>
+      <pre id="loginLog" class="log hidden"></pre>
+      <div id="loginCodeRow" class="row hidden">
+        <input id="loginCode" placeholder="Paste the code from the browser here">
+        <button id="loginCodeBtn" class="btn">Submit</button>
+      </div>
+
+      <label class="field-label" for="claudePath">Claude Code program</label>
+      <input id="claudePath" placeholder="Auto-detect">
+      <p class="hint" id="claudeHint"></p>
+
+      <label class="field-label" for="rcName">Remote Control name</label>
+      <input id="rcName" placeholder="Defaults to this computer's name">
+
+      <div class="row end">
+        <button id="settingsClose" class="btn ghost">Cancel</button>
+        <button id="settingsSave" class="btn primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remote Control -->
+  <div id="rcModal" class="modal hidden">
+    <div class="sheet">
+      <h2>Remote Control</h2>
+      <p class="hint">Lets you start and steer Claude Code sessions on this computer from claude.ai or the Claude phone app. It runs on your <b>full login</b>, since long-lived tokens aren't allowed to use it.</p>
+      <div class="row">
+        <span id="rcState" class="muted">Off</span>
+        <div class="spacer"></div>
+        <button id="rcToggle" class="btn primary">Turn on</button>
+      </div>
+      <pre id="rcLog" class="log"></pre>
+      <div class="row end"><button id="rcClose" class="btn ghost">Close</button></div>
+    </div>
+  </div>
+
+  <script src="../../node_modules/marked/lib/marked.umd.js"></script>
+  <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
